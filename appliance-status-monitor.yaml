@@ -1,18 +1,18 @@
 blueprint:
-  name: Monitor the state of an appliance - by leofabri
+  name: Monitor the state of an appliance - by leofabri & Floppe
   description: >-
-    `- Version: 2.1.1 -`
+    `- Version: 2.2.1 -`
 
 
     This automation can detect and monitor the state of your appliances by observing their power consumption.
 
-    This automation blueprint is universal and very versatile. You can use it with anything that consumes energy: a washing machine, a dishwasher, your fridge, the TV, etc. 
+    This automation blueprint is universal and very versatile. You can use it with anything that consumes energy: a washing machine, a dishwasher, your fridge, the TV, etc.
     I refer to the appliance's operations with the generic word job. A job could be anything (washing, rinsing...).
 
 
-    You can pair this project with other automations and services. I designed it with flexibility in mind. For instance, if you want to 
-    send alerts when the washing machine is not resuming a job, you want to send TTS notifications, or if 
-    your fridge is somehow not working and de-icing you can see that happening. All you needed is just a little bit of creativity. 
+    You can pair this project with other automations and services. I designed it with flexibility in mind. For instance, if you want to
+    send alerts when the washing machine is not resuming a job, you want to send TTS notifications, or if
+    your fridge is somehow not working and de-icing you can see that happening. All you needed is just a little bit of creativity.
     You can use the state machine and the custom actions to extend it.
 
 
@@ -33,7 +33,7 @@ blueprint:
     * **<ins>job_completed</ins>** - Triggered when the current incomplete job cycle is finished. The appliance consumes less than the Finishing Power threshold (with the possibility of selecting for how long) 
 
 
-    <strong>First setup?</strong> <i>[Follow the instructions](https://github.com/leofabri/hassio_appliance-status-monitor)</i>
+    <strong>First setup?</strong> <i>[Follow the instructions](https://github.com/Floppe/hassio_appliance-status-monitor)</i>
   domain: automation
   input:
     appliance_socket:
@@ -47,49 +47,133 @@ blueprint:
       selector:
         entity:
           domain: switch
-    appliance_power_sensor:
-      name: Appliance Power Consumption
-      description: >-
-        (*REQUIRED)
+
+    energy:
+      name: Energy tracking
+      icon: mdi:earth
+      description: Track how much energy and costs a cycle took
+      collapsed: true
+      input:
+        appliance_energy_sensor:
+          name: Appliance Energy Consumption
+          description: '(*OPTIONAL*) Entity representing the energy consumption of the appliance.'
+          selector:
+            entity:
+              domain: sensor
+              device_class: energy
+          default: null
+        refresh_zwave_energy_sensor:
+          name: Refresh Z-Wave Energy Sensor
+          description: >
+            Whether sensor is Z-Wave and the sensor needs manual refresh before idle state.
 
 
-        The power entity with the current power absorption in Watts.
-      default: []
-      selector:
-        entity:
-          domain: sensor
-    appliance_starting_power_threshold:
-      name: Starting power threshold
-      description: >-
-        (*REQUIRED)
+            Note that this requires delayed job completion to be large enough so sensor is refreshed before.
+          selector:
+            boolean:
+          default: false
+        appliance_metadata_job_cycle:
+          name: Appliance Energy metadata per job cycle
+          description: '(*OPTIONAL* | Helper | Name: <i><strong><your_appliance_name>_metadata_for_job_cycle</strong></i>)'
+          default: []
+          selector:
+            entity:
+              domain: input_text
+              multiple: false
+        energy_price:
+          name: Energy Price
+          description: '(*OPTIONAL* | Energy price.)'
+          default: []
+          selector:
+            entity:
+              domain: sensor
+              device_class: monetary
+              multiple: false
+        energy_price_margin:
+          name: Energy Margin
+          description: '(*OPTIONAL* | Energy margin if not included in the energy price.)'
+          default: []
+          selector:
+            entity:
+              domain: sensor
+              device_class: monetary
+              multiple: false
+        energy_price_transfers:
+          name: Energy Transfers Costs
+          description: '(*OPTIONAL* | Energy transfers costs if not included in the energy price.)'
+          default: []
+          selector:
+            entity:
+              domain: sensor
+              device_class: monetary
+              multiple: false
+        energy_price_taxes:
+          name: Energy Taxes
+          description: >
+            (*OPTIONAL* | Energy taxes if not included in the energy price.)
 
 
-        Power threshold above which we assume the appliance has started
-        a new job or is resuming the current one (job_ongoing state).
-      default: 5
-      selector:
-        number:
-          min: 1.0
-          max: 100.0
-          unit_of_measurement: W
-          mode: slider
-          step: 1.0
-    appliance_finishing_power_threshold:
-      name: Finishing power threshold
-      description: >-
-        (*REQUIRED)
+            Note that this is not VAT, but energy taxes. VAT should be included in the price, margin and transfers if needed.
+          default: []
+          selector:
+            entity:
+              domain: sensor
+              device_class: monetary
+              multiple: false
+
+    power:
+      name: Power consumption
+      icon: mdi:earth
+      description: Power consumption
+      collapsed: false
+      input:
+        appliance_power_sensor:
+          name: Appliance Power Consumption
+          description: >-
+            (*REQUIRED)
 
 
-        Power threshold below which we assume the appliance has finished
-        a job (job_completed state).
-      default: 3
-      selector:
-        number:
-          min: 1.0
-          max: 100.0
-          unit_of_measurement: W
-          mode: slider
-          step: 1.0
+            The power entity with the current power absorption in Watts.
+          default: []
+          selector:
+            entity:
+              domain:
+              - sensor
+              - input_number
+              device_class: power
+        appliance_starting_power_threshold:
+          name: Starting power threshold
+          description: >-
+            (*REQUIRED)
+
+
+            Power threshold above which we assume the appliance has started
+            a new job or is resuming the current one (job_ongoing state).
+          default: 5
+          selector:
+            number:
+              min: 1.0
+              max: 100.0
+              unit_of_measurement: W
+              mode: slider
+              step: 1.0
+        appliance_finishing_power_threshold:
+          name: Finishing power threshold
+          description: >-
+            (*REQUIRED)
+
+
+            Power threshold below which we assume the appliance has finished
+            a job (job_completed state).
+          default: 3
+          selector:
+            number:
+              min: 1.0
+              max: 100.0
+              unit_of_measurement: W
+              mode: slider
+              step: 1.0
+
     appliance_suspended_sensor:
       name: Appliance Suspended entity
       description: >-
@@ -105,7 +189,7 @@ blueprint:
     appliance_state_machine:
       name: Appliance State Machine
       description: >-
-        (*REQUIRED | Helper | Name: <i><strong><your_appliance_name>_state_machine</strong></i> | [?](https://github.com/leofabri/hassio_appliance-status-monitor/blob/main/home%20assistant/packages/your_appliance_name.yaml#L18))
+        (*REQUIRED | Helper | Name: <i><strong><your_appliance_name>_state_machine</strong></i>)
 
 
         The State Machine entity of this appliance.
@@ -116,7 +200,7 @@ blueprint:
     appliance_job_cycle:
       name: Appliance Job Cycle
       description: >-
-        (*REQUIRED | Helper | Name: <i><strong><your_appliance_name>_job_cycle</strong></i> | [?](https://github.com/leofabri/hassio_appliance-status-monitor/blob/main/home%20assistant/packages/your_appliance_name.yaml#L9))
+        (*REQUIRED | Helper | Name: <i><strong><your_appliance_name>_job_cycle</strong></i>)
 
 
         A sensor that stores whether the appliance is still in a job cycle
@@ -136,7 +220,7 @@ blueprint:
     delayed_job_completion_timer:
       name: Delayed Job Completion timer
       description: >-
-        (*REQUIRED | Helper | Name: <i><strong><your_appliance_name>_delayed_job_completion_timer</i></strong> | [?](https://github.com/leofabri/hassio_appliance-status-monitor/blob/main/home%20assistant/packages/your_appliance_name.yaml#L2))
+        (*REQUIRED | Helper | Name: <i><strong><your_appliance_name>_delayed_job_completion_timer</i></strong>)
 
 
         The timer that will allow to 'wait' & 'see' before assuming that a job has been completed
@@ -147,7 +231,7 @@ blueprint:
     automation_self_trigger:
       name: Automation Self-triggering entity
       description: >-
-        (*REQUIRED | Helper | Name: <i><strong><your_appliance_name>_automation_self_trigger</i></strong> | [?](https://github.com/leofabri/hassio_appliance-status-monitor/blob/main/home%20assistant/packages/your_appliance_name.yaml#L13))
+        (*REQUIRED | Helper | Name: <i><strong><your_appliance_name>_automation_self_trigger</i></strong>)
 
 
         This entity is in charge of triggering the execution of the automation when it changes from off -> on.
@@ -165,7 +249,7 @@ blueprint:
         (OPTIONAL | Helper | <i><strong>Suggested: 0, Default: 0 | DISABLED</strong></i>)
 
 
-        During a job cycle, some appliances may intermittently use less power than the finishing power threshold, 
+        During a job cycle, some appliances may intermittently use less power than the finishing power threshold,
         thus entering the job_completed state (even when the job is not finished).
 
         With this value set, the automation will wait for the indicated time in seconds, and see if in that timespan the power consumption rises.
@@ -182,124 +266,138 @@ blueprint:
           step: 1.0
           unit_of_measurement: seconds
           mode: slider
-    actions_new_job_cycle_begins:
-      name: Action(s) when a new job cycle begins
-      description: >-
-        Executed when the appliance starts a new job cycle (<strong>idle -> job_ongoing</strong>
-        state).
-        Note that here the job cycle indicator is off, which means that no previous job has to be completed.
 
-        ...
+    actions:
+      name: Actions
+      icon: mdi:earth
+      description: Actions to run on certain cycles.
+      collapsed: true
+      input:
+        actions_new_job_cycle_begins:
+          name: Action(s) when a new job cycle begins
+          description: >-
+            Executed when the appliance starts a new job cycle (<strong>idle -> job_ongoing</strong> state).
+            Note that here the job cycle indicator is off, which means that no previous job has to be completed.
 
-        **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute. 
-        Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!). 
-        This section is meant to be used to trigger other things.
+            ...
 
-        If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
-      default: []
-      selector:
-        action:
-    actions_job_cycle_resumes:
-      name: Action(s) when a job cycle resumes
-      description: >-
-        Executed when a pending job cycle is resumed (<strong>paused | unplugged | detached_overload -> job_ongoing</strong>
-        state).
-        Note that in this situation, the job cycle indicator is still on. That's how I know that the appliance is resuming and not startig a job.
+            **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute.
+            Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!).
+            This section is meant to be used to trigger other things.
 
-        ...
+            If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
+          default: []
+          selector:
+            action:
+        actions_job_cycle_resumes:
+          name: Action(s) when a job cycle resumes
+          description: >-
+            Executed when a pending job cycle is resumed (<strong>paused | unplugged | detached_overload -> job_ongoing</strong> state).
+            Note that in this situation, the job cycle indicator is still on. That's how I know that the appliance is resuming and not startig a job.
 
-        **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute. 
-        Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!). 
-        This section is meant to be used to trigger other things.
+            ...
 
-        If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
-      default: []
-      selector:
-        action:
-    actions_job_cycle_ends:
-      name: Action(s) when a job cycle is finished
-      description: >-
-        Executed when the appliance finishes a job cycle (<strong>job_ongoing -> job_completed</strong>
-        state).
+            **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute.
+            Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!).
+            This section is meant to be used to trigger other things.
 
-        ...
+            If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
+          default: []
+          selector:
+            action:
+        actions_job_cycle_ends:
+          name: Action(s) when a job cycle is finished
+          description: >-
+            Executed when the appliance finishes a job cycle (<strong>job_ongoing -> job_completed</strong> state).
 
-        **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute. 
-        Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!). 
-        This section is meant to be used to trigger other things.
+            ...
 
-        If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
-      default: []
-      selector:
-        action:
-    actions_unplugged_overload:
-      name: Action(s) when an overload occurs
-      description: >-
-        Executed when the appliance is detected as unplugged (because of an overload
-        situation).
+            **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute.
+            Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!).
+            This section is meant to be used to trigger other things.
 
-        ...
+            If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
+          default: []
+          selector:
+            action:
+        actions_unplugged_overload:
+          name: Action(s) when an overload occurs
+          description: >-
+            Executed when the appliance is detected as unplugged (because of an overload situation).
 
-        **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute. 
-        Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!). 
-        This section is meant to be used to trigger other things.
+            ...
 
-        If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
-      default: []
-      selector:
-        action:
-    actions_paused_after_overload:
-      name: Action(s) when the overload situation is solved, now paused
-      description: >-
-        Executed when the state changes from <strong>detached_overload -> paused</strong> (NOT resuming the job).
+            **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute.
+            Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!).
+            This section is meant to be used to trigger other things.
 
-        ...
+            If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
+          default: []
+          selector:
+            action:
+        actions_paused_after_overload:
+          name: Action(s) when the overload situation is solved, now paused
+          description: >-
+            Executed when the state changes from <strong>detached_overload -> paused</strong> (NOT resuming the job).
 
-        **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute. 
-        Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!). 
-        This section is meant to be used to trigger other things.
+            ...
 
-        If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
-      default: []
-      selector:
-        action:
-    actions_resuming_after_overload:
-      name: Action(s) when the overload situation is solved, now resuming
-      description: >-
-        Executed when the state changes from <strong>detached_overload
-        -> job_ongoing</strong> (resuming the previous job).
+            **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute.
+            Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!).
+            This section is meant to be used to trigger other things.
 
-        ...
+            If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
+          default: []
+          selector:
+            action:
+        actions_resuming_after_overload:
+          name: Action(s) when the overload situation is solved, now resuming
+          description: >-
+            Executed when the state changes from <strong>detached_overload
+            -> job_ongoing</strong> (resuming the previous job).
 
-        **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute. 
-        Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!). 
-        This section is meant to be used to trigger other things.
+            ...
 
-        If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
-      default: []
-      selector:
-        action:
-    actions_paused_after_unplugged:
-      name: Action(s) when the appliance is plugged back in, now paused
-      description: >-
-        Executed when the state changes from <strong>unplugged -> paused</strong> (NOT resuming the job).
+            **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute.
+            Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!).
+            This section is meant to be used to trigger other things.
 
-        ...
+            If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
+          default: []
+          selector:
+            action:
+        actions_paused_after_unplugged:
+          name: Action(s) when the appliance is plugged back in, now paused
+          description: >-
+            Executed when the state changes from <strong>unplugged -> paused</strong> (NOT resuming the job).
 
-        **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute. 
-        Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!). 
-        This section is meant to be used to trigger other things.
+            ...
 
-        If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
-      default: []
-      selector:
-        action:
-  source_url: https://github.com/leofabri/hassio_appliance-status-monitor/blob/main/appliance-status-monitor.yaml
+            **WARNING:** Just use non-blocking actions in this space! No delays, actionable notifications, TTS, waits, or anything that takes time to execute.
+            Please consider that the permanence in this state could last for a limited amount of time (seconds, potentially!).
+            This section is meant to be used to trigger other things.
+
+            If you really need to trigger long operations, a clean solution is to dispatch the work by calling other services or using the State Machine entity to wake up other external automations.
+          default: []
+          selector:
+            action:
+  source_url: https://github.com/Floppe/hassio_appliance-status-monitor/blob/main/appliance-status-monitor.yaml
+
 variables:
   appliance_socket: !input "appliance_socket"
   appliance_suspended_sensor: !input "appliance_suspended_sensor"
   delayed_job_completion_duration: !input "delayed_job_completion_duration"
   delayed_job_completion_timer: !input "delayed_job_completion_timer"
+  appliance_metadata_job_cycle: !input "appliance_metadata_job_cycle"
+  appliance_energy_sensor: !input "appliance_energy_sensor"
+  refresh_zwave_energy_sensor: !input "refresh_zwave_energy_sensor"
+  energy_price: !input "energy_price"
+  energy_price_margin: !input "energy_price_margin"
+  energy_price_transfers: !input "energy_price_transfers"
+  energy_price_taxes: !input "energy_price_taxes"
+  appliance_state_machine: !input "appliance_state_machine"
+  isset_energy: '{{ appliance_energy_sensor is defined }}'
+  isset_metadata: '{{ appliance_metadata_job_cycle is defined and isset_energy }}'
 trigger:
   - platform: state
     entity_id: !input "appliance_power_sensor"
@@ -336,6 +434,12 @@ trigger:
       entity_id: !input "delayed_job_completion_timer"
     id: job_completed_timer_finished
 
+  - platform: time_pattern
+    hours: "*"
+    minutes: "59"
+    seconds: "59"
+    id: window_event
+
   - platform: homeassistant
     event: start
     id: home_assistant_started_event
@@ -364,6 +468,13 @@ condition:
         id: home_assistant_started_event
       - condition: trigger
         id: automation_reloaded_event
+      - condition: and
+        conditions:
+          - condition: state
+            entity_id: !input "appliance_state_machine"
+            state: job_ongoing
+          - condition: trigger
+            id: window_event
 action:
   - service: input_boolean.turn_off
     data: {}
@@ -394,6 +505,7 @@ action:
           - choose: []
             default: !input "actions_unplugged_overload"
   - choose:
+      # suspended or paused?
       - conditions:
           - condition: state
             entity_id: !input "appliance_job_cycle"
@@ -424,6 +536,7 @@ action:
               option: paused
             target:
               entity_id: !input "appliance_state_machine"
+      # unplugged?
       - conditions:
           - condition: template
             value_template: "{{ states(appliance_socket) == 'off' }}"
@@ -458,18 +571,21 @@ action:
                     data: {}
                     target:
                       entity_id: !input "delayed_job_completion_timer"
+      # overload -> paused, run action
       - conditions:
           - condition: trigger
             id: paused_after_overload_event
         sequence:
           - choose: []
             default: !input "actions_paused_after_overload"
+      # unplugged -> paused, run action
       - conditions:
           - condition: trigger
             id: paused_after_unplugged_event
         sequence:
           - choose: []
             default: !input "actions_paused_after_unplugged"
+      # paused -> resuming, run action
       - conditions:
           - condition: trigger
             id: resuming_after_paused_overload_event
@@ -478,6 +594,7 @@ action:
             default: !input "actions_resuming_after_overload"
     default:
       - choose:
+          # on and consuming power
           - conditions:
               - condition: template
                 value_template: "{{ states(appliance_socket) == 'on' }}"
@@ -486,16 +603,39 @@ action:
                 above: !input "appliance_starting_power_threshold"
             sequence:
               - choose:
+                  # waiting for idle? cancel timer as we consumes power again
                   - conditions:
                       - condition: template
                         value_template:
-                          "{{ states(delayed_job_completion_timer) == 'active'
-                          }}"
+                          "{{ states(delayed_job_completion_timer) == 'active' }}"
                     sequence:
                       - service: timer.cancel
                         data: {}
                         target:
                           entity_id: !input "delayed_job_completion_timer"
+              - if: '{{ states(appliance_state_machine) == "job_ongoing" and trigger.id == "window_event" }}'
+                then:
+                  - &calculate
+                    alias: Calculate power usage
+                    if: '{{ isset_energy and isset_metadata }}'
+                    then:
+                      - variables:
+                          json: '{{ states(appliance_metadata_job_cycle)|from_json }}'
+                          initial_energy: '{{ json.initial_energy }}'
+                          current_energy: '{{ states(appliance_energy_sensor) | float }}'
+                          energy_window: '{{ json.energy_window | float }}'
+                          energy_used: '{{ current_energy - energy_window }}'
+                          price: '{{ states(energy_price) | float(0) }}'
+                          margin: '{{ states(energy_price_margin) if energy_price_margin | count > 0 }}'
+                          cost_window: '{{ (price + margin | float(0)) * energy_used }}'
+                          cost_total: '{{ json.cost | float + cost_window | float }}'
+                      # store changed values
+                      - service: input_text.set_value
+                        data:
+                          value: '{"initial_energy":{{initial_energy}},"energy_window":{{current_energy|round(3)}},"cost":{{cost_total|round(4)}}}'
+                        target:
+                          entity_id: !input "appliance_metadata_job_cycle"
+              # make sure job is ongoing and stop
               - condition: not
                 conditions:
                   - condition: state
@@ -507,6 +647,7 @@ action:
                 target:
                   entity_id: !input "appliance_state_machine"
               - choose:
+                  # if job is off, then we started it now
                   - conditions:
                       - condition: state
                         entity_id: !input "appliance_job_cycle"
@@ -516,11 +657,23 @@ action:
                         data: {}
                         target:
                           entity_id: !input "appliance_job_cycle"
+                      - alias: reset energy helpers
+                        if: '{{ isset_metadata }}'
+                        then:
+                          - variables:
+                              initial_energy: "{% if isset_metadata %}{{ states(appliance_energy_sensor) | float }}{% else %}0{% endif %}"
+                          - service: input_text.set_value
+                            data:
+                              value: '{"initial_energy":{{initial_energy}},"energy_window":{{initial_energy}},"cost":0}'
+                            target:
+                              entity_id: !input "appliance_metadata_job_cycle"
+                      # run action
                       - choose: []
                         default: !input "actions_new_job_cycle_begins"
                 default:
                   - choose: []
                     default: !input "actions_job_cycle_resumes"
+          # on but does not consume power
           - conditions:
               - condition: state
                 entity_id: !input "appliance_state_machine"
@@ -538,8 +691,7 @@ action:
                   - conditions:
                       - condition: template
                         value_template:
-                          "{{ states(delayed_job_completion_timer) != 'active'
-                          }}"
+                          "{{ states(delayed_job_completion_timer) != 'active' }}"
                       - condition: not
                         conditions:
                           - condition: trigger
@@ -549,6 +701,12 @@ action:
                         data: {}
                         target:
                           entity_id: !input "delayed_job_completion_timer"
+                      - if: '{{ states(refresh_zwave_energy_sensor) }}'
+                        then:
+                          - action: zwave_js.refresh_value
+                            data:
+                              entity_id:
+                                - !input "appliance_energy_sensor"
               - choose:
                   - conditions:
                       - condition: template
@@ -605,15 +763,27 @@ action:
                   - conditions:
                       - condition: template
                         value_template:
-                          "{{ states(delayed_job_completion_timer) == 'active'
-                          }}"
+                          "{{ states(delayed_job_completion_timer) == 'active' }}"
                     sequence:
                       - service: timer.cancel
                         data: {}
                         target:
                           entity_id: !input "delayed_job_completion_timer"
               - choose: []
-                default: !input "actions_job_cycle_ends"
+                default:
+                  - *calculate
+                  - variables:
+                      json: '{{ states(appliance_metadata_job_cycle)|from_json }}'
+                      total_energy_int: '{{ states(appliance_energy_sensor) | float - json.initial_energy | float }}'
+                      # variables for the action
+                      taxes: '{{ (states(energy_price_taxes) | float * total_energy_int) | round(4) }}'
+                      transfer: '{{ (states(energy_price_transfers) | float * total_energy_int) | round (4) }}'
+                      total_cost: '{{ json.cost | float | round(4)}}'
+                      total_cost_additional: '{{ (json.cost | float + transfer + taxes) | round(4) }}'
+                      total_energy: '{{ total_energy_int | round(4) }}'
+                  - alias: Run action when job cycle ends
+                    choose: []
+                    default: !input "actions_job_cycle_ends"
               - choose:
                   - conditions:
                       - condition: or
