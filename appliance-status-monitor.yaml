@@ -629,10 +629,11 @@ action:
                           margin: '{{ states(energy_price_margin) if energy_price_margin | count > 0 }}'
                           cost_window: '{{ (price + margin | float(0)) * energy_used }}'
                           cost_total: '{{ json.cost | float + cost_window | float }}'
+                          time_start: '{{ json.time_start }}'
                       # store changed values
                       - service: input_text.set_value
                         data:
-                          value: '{"initial_energy":{{initial_energy}},"energy_window":{{current_energy|round(3)}},"cost":{{cost_total|round(4)}}}'
+                          value: '{"initial_energy":{{initial_energy}},"energy_window":{{current_energy|round(3)}},"cost":{{cost_total|round(4)}},"time_start":{{time_start}}}'
                         target:
                           entity_id: !input "appliance_metadata_job_cycle"
               # make sure job is ongoing and stop
@@ -661,10 +662,11 @@ action:
                         if: '{{ isset_metadata }}'
                         then:
                           - variables:
-                              initial_energy: "{% if isset_metadata %}{{ states(appliance_energy_sensor) | float }}{% else %}0{% endif %}"
+                              initial_energy: '{% if isset_metadata %}{{ states(appliance_energy_sensor) | float }}{% else %}0{% endif %}'
+                              time_start: '{{ utcnow() | as_timestamp | int}}'
                           - service: input_text.set_value
                             data:
-                              value: '{"initial_energy":{{initial_energy}},"energy_window":{{initial_energy}},"cost":0}'
+                              value: '{"initial_energy":{{initial_energy}},"energy_window":{{initial_energy}},"cost":0,"time_start":{{time_start}}}'
                             target:
                               entity_id: !input "appliance_metadata_job_cycle"
                       # run action
@@ -775,12 +777,16 @@ action:
                   - variables:
                       json: '{{ states(appliance_metadata_job_cycle)|from_json }}'
                       total_energy_int: '{{ states(appliance_energy_sensor) | float - json.initial_energy | float }}'
+                      time_start: '{{ json.time_start }}'
+                      time_end: '{{ utcnow() | as_timestamp | int }}'
+                      completion_delay: '{{ delayed_job_completion_duration | int(0) }}'
                       # variables for the action
                       taxes: '{{ (states(energy_price_taxes) | float * total_energy_int) | round(4) }}'
                       transfer: '{{ (states(energy_price_transfers) | float * total_energy_int) | round (4) }}'
                       total_cost: '{{ json.cost | float | round(4)}}'
                       total_cost_additional: '{{ (json.cost | float + transfer + taxes) | round(4) }}'
                       total_energy: '{{ total_energy_int | round(4) }}'
+                      total_time: '{{ time_end - time_start - completion_delay }}'
                   - alias: Run action when job cycle ends
                     choose: []
                     default: !input "actions_job_cycle_ends"
