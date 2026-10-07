@@ -69,9 +69,23 @@ blueprint:
 
 
             Note that this requires delayed job completion to be large enough so sensor is refreshed before.
+
+            Also requests a fresh reading 30 seconds before each cost window ends, because Z-Wave energy reports often arrive late.
           selector:
             boolean:
           default: false
+        energy_window_minutes:
+          name: Cost calculation window
+          description: >-
+            How often the energy used so far is priced while a job runs. Match the resolution of your
+            energy price sensor: 15 for quarter-hourly spot prices, 60 for hourly ones.
+          default: "15"
+          selector:
+            select:
+              options:
+                - "15"
+                - "30"
+                - "60"
         appliance_metadata_job_cycle:
           name: Appliance Energy metadata per job cycle
           description: '(*OPTIONAL* | Helper | Name: <i><strong><your_appliance_name>_metadata_for_job_cycle</strong></i>)'
@@ -395,6 +409,7 @@ variables:
   energy_price_margin: !input "energy_price_margin"
   energy_price_transfers: !input "energy_price_transfers"
   energy_price_taxes: !input "energy_price_taxes"
+  energy_window_minutes: !input "energy_window_minutes"
   appliance_state_machine: !input "appliance_state_machine"
   isset_energy: '{{ appliance_energy_sensor is string and appliance_energy_sensor | length > 0 }}'
   isset_metadata: '{{ isset_energy and appliance_metadata_job_cycle is string and appliance_metadata_job_cycle | length > 0 }}'
@@ -438,11 +453,41 @@ trigger:
       entity_id: !input "delayed_job_completion_timer"
     id: job_completed_timer_finished
 
+  # Energy cost windows. These triggers are used to price the energy used in the window that just ended.
   - platform: time_pattern
-    hours: "*"
-    minutes: "59"
-    seconds: "59"
+    minutes: 14
+    seconds: 59
     id: window_event
+  - platform: time_pattern
+    minutes: 29
+    seconds: 59
+    id: window_event
+  - platform: time_pattern
+    minutes: 44
+    seconds: 59
+    id: window_event
+  - platform: time_pattern
+    minutes: 59
+    seconds: 59
+    id: window_event
+
+  # Z-Wave energy reports arrive late, so ask for a fresh reading 30 s before each window ends.
+  - platform: time_pattern
+    minutes: 14
+    seconds: 29
+    id: refresh_event
+  - platform: time_pattern
+    minutes: 29
+    seconds: 29
+    id: refresh_event
+  - platform: time_pattern
+    minutes: 44
+    seconds: 29
+    id: refresh_event
+  - platform: time_pattern
+    minutes: 59
+    seconds: 29
+    id: refresh_event
 
   - platform: homeassistant
     event: start
@@ -478,12 +523,59 @@ condition:
             entity_id: !input "appliance_state_machine"
             state: job_ongoing
           - condition: trigger
+            id: refresh_event
+          - condition: template
+            value_template: "{{ refresh_zwave_energy_sensor and isset_energy }}"
+          - condition: template
+            value_template: "{{ (now().minute + 1) % (energy_window_minutes | int(60)) == 0 }}"
+      - condition: and
+        conditions:
+          - condition: state
+            entity_id: !input "appliance_state_machine"
+            state: job_ongoing
+          - condition: trigger
             id: window_event
+          - condition: template
+            value_template: "{{ (now().minute + 1) % (energy_window_minutes | int(60)) == 0 }}"
 action:
   - service: input_boolean.turn_off
     data: {}
     target:
       entity_id: !input "automation_self_trigger"
+  - if: '{{ trigger.id == "refresh_event" }}'
+    then:
+      - action: zwave_js.refresh_value
+        data:
+          entity_id:
+            - !input "appliance_energy_sensor"
+      - stop: Fresh energy reading requested
+  # Price the energy used in the window that just ended.
+  - if: '{{ trigger.id == "window_event" }}'
+    then:
+      - &calculate
+        alias: Calculate power usage
+        if: '{{ isset_metadata and states(appliance_energy_sensor) | is_number }}'
+        then:
+          - variables:
+              json: '{{ states(appliance_metadata_job_cycle)|from_json }}'
+              initial_energy: '{{ json.initial_energy }}'
+              current_energy: '{{ states(appliance_energy_sensor) | float(0) }}'
+              energy_window: '{{ json.energy_window | float(0) }}'
+              energy_used: '{{ [current_energy - energy_window, 0] | max }}'
+              price: '{{ states(energy_price) | float(0) if has_price else 0 }}'
+              margin: '{{ states(energy_price_margin) | float(0) if has_margin else 0 }}'
+              transfer_price: '{{ states(energy_price_transfers) | float(0) if has_transfers else 0 }}'
+              tax_price: '{{ states(energy_price_taxes) | float(0) if has_taxes else 0 }}'
+              cost_total: '{{ json.get("cost", 0) | float(0) + (price + margin) * energy_used }}'
+              transfer_total: '{{ json.get("transfer", 0) | float(0) + transfer_price * energy_used }}'
+              taxes_total: '{{ json.get("taxes", 0) | float(0) + tax_price * energy_used }}'
+              time_start: '{{ json.time_start | int(0) }}'
+          # store changed values
+          - service: input_text.set_value
+            data:
+              value: '{"initial_energy":{{initial_energy}},"energy_window":{{current_energy|round(3)}},"cost":{{cost_total|round(5)}},"transfer":{{transfer_total|round(5)}},"taxes":{{taxes_total|round(5)}},"time_start":{{time_start}}}'
+            target:
+              entity_id: !input "appliance_metadata_job_cycle"
   - choose:
       - conditions:
           - condition: template
@@ -617,29 +709,6 @@ action:
                         data: {}
                         target:
                           entity_id: !input "delayed_job_completion_timer"
-              - if: '{{ states(appliance_state_machine) == "job_ongoing" and trigger.id == "window_event" }}'
-                then:
-                  - &calculate
-                    alias: Calculate power usage
-                    if: '{{ isset_energy and isset_metadata }}'
-                    then:
-                      - variables:
-                          json: '{{ states(appliance_metadata_job_cycle)|from_json if isset_metadata else dict(initial_energy=0, time_start=0, cost=0) }}'
-                          initial_energy: '{{ json.initial_energy }}'
-                          current_energy: '{{ states(appliance_energy_sensor) | float }}'
-                          energy_window: '{{ json.energy_window | float }}'
-                          energy_used: '{{ current_energy - energy_window }}'
-                          price: '{{ states(energy_price) | float(0) if has_price else 0 }}'
-                          margin: '{{ states(energy_price_margin) | float(0) if has_margin else 0 }}'
-                          cost_window: '{{ (price + margin) * energy_used }}'
-                          cost_total: '{{ json.cost | float + cost_window | float }}'
-                          time_start: '{{ json.time_start | int(0) }}'
-                      # store changed values
-                      - service: input_text.set_value
-                        data:
-                          value: '{"initial_energy":{{initial_energy}},"energy_window":{{current_energy|round(3)}},"cost":{{cost_total|round(4)}},"time_start":{{time_start}}}'
-                        target:
-                          entity_id: !input "appliance_metadata_job_cycle"
               # make sure job is ongoing and stop
               - condition: not
                 conditions:
@@ -670,7 +739,7 @@ action:
                               time_start: '{{ utcnow() | as_timestamp | int}}'
                           - service: input_text.set_value
                             data:
-                              value: '{"initial_energy":{{initial_energy}},"energy_window":{{initial_energy}},"cost":0,"time_start":{{time_start}}}'
+                              value: '{"initial_energy":{{initial_energy}},"energy_window":{{initial_energy}},"cost":0,"transfer":0,"taxes":0,"time_start":{{time_start}}}'
                             target:
                               entity_id: !input "appliance_metadata_job_cycle"
                       # run action
@@ -785,8 +854,8 @@ action:
                       time_end: '{{ utcnow() | as_timestamp | int }}'
                       completion_delay: '{{ delayed_job_completion_duration | int(0) }}'
                       # variables for the action
-                      taxes: '{{ ((states(energy_price_taxes) | float(0)) * total_energy_int) | round(4) if has_taxes else 0 }}'
-                      transfer: '{{ ((states(energy_price_transfers) | float(0)) * total_energy_int) | round(4) if has_transfers else 0 }}'
+                      taxes: '{{ json.get("taxes", 0) | float(0) | round(4) }}'
+                      transfer: '{{ json.get("transfer", 0) | float(0) | round(4) }}'
                       total_cost: '{{ json.cost | float(0) | round(4) }}'
                       total_cost_additional: '{{ (json.cost | float(0) + transfer + taxes) | round(4) }}'
                       total_energy: '{{ total_energy_int | round(4) }}'
