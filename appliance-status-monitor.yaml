@@ -396,8 +396,12 @@ variables:
   energy_price_transfers: !input "energy_price_transfers"
   energy_price_taxes: !input "energy_price_taxes"
   appliance_state_machine: !input "appliance_state_machine"
-  isset_energy: '{{ appliance_energy_sensor is defined }}'
-  isset_metadata: '{{ appliance_metadata_job_cycle is defined and isset_energy }}'
+  isset_energy: '{{ appliance_energy_sensor is string and appliance_energy_sensor | length > 0 }}'
+  isset_metadata: '{{ isset_energy and appliance_metadata_job_cycle is string and appliance_metadata_job_cycle | length > 0 }}'
+  has_price: '{{ energy_price is string and energy_price | length > 0 }}'
+  has_margin: '{{ energy_price_margin is string and energy_price_margin | length > 0 }}'
+  has_transfers: '{{ energy_price_transfers is string and energy_price_transfers | length > 0 }}'
+  has_taxes: '{{ energy_price_taxes is string and energy_price_taxes | length > 0 }}'
 trigger:
   - platform: state
     entity_id: !input "appliance_power_sensor"
@@ -620,16 +624,16 @@ action:
                     if: '{{ isset_energy and isset_metadata }}'
                     then:
                       - variables:
-                          json: '{{ states(appliance_metadata_job_cycle)|from_json }}'
+                          json: '{{ states(appliance_metadata_job_cycle)|from_json if isset_metadata else dict(initial_energy=0, time_start=0, cost=0) }}'
                           initial_energy: '{{ json.initial_energy }}'
                           current_energy: '{{ states(appliance_energy_sensor) | float }}'
                           energy_window: '{{ json.energy_window | float }}'
                           energy_used: '{{ current_energy - energy_window }}'
-                          price: '{{ states(energy_price) | float(0) }}'
-                          margin: '{{ states(energy_price_margin) if energy_price_margin | count > 0 }}'
-                          cost_window: '{{ (price + margin | float(0)) * energy_used }}'
+                          price: '{{ states(energy_price) | float(0) if has_price else 0 }}'
+                          margin: '{{ states(energy_price_margin) | float(0) if has_margin else 0 }}'
+                          cost_window: '{{ (price + margin) * energy_used }}'
                           cost_total: '{{ json.cost | float + cost_window | float }}'
-                          time_start: '{{ json.time_start }}'
+                          time_start: '{{ json.time_start | int(0) }}'
                       # store changed values
                       - service: input_text.set_value
                         data:
@@ -703,7 +707,7 @@ action:
                         data: {}
                         target:
                           entity_id: !input "delayed_job_completion_timer"
-                      - if: '{{ states(refresh_zwave_energy_sensor) }}'
+                      - if: '{{ refresh_zwave_energy_sensor and isset_energy }}'
                         then:
                           - action: zwave_js.refresh_value
                             data:
@@ -725,7 +729,7 @@ action:
                                   \ | int %}\n  {% set t_total_duration = state_attr(delayed_job_completion_timer,\
                                   \ 'duration') %}\n  {% set duration_split = t_total_duration.split(':')\
                                   \ %}\n  {% set t_total_duration_sec  = (duration_split[0] | int\
-                                  \ * 3600) + (duration_split[1] | int * 60) + (duration_split[0]\
+                                  \ * 3600) + (duration_split[1] | int * 60) + (duration_split[2]\
                                   \ | int) %}\n  {% set t_elapsed_sec = (t_total_duration_sec - t_remaining_sec)\
                                   \ | int %}\n  {{ t_elapsed_sec < (delayed_job_completion_duration)\
                                   \ | int }}\n{% else %}\n  {{0}}\n{% endif %}"
@@ -739,7 +743,7 @@ action:
                                     \ | int %}\n  {% set t_total_duration = state_attr(delayed_job_completion_timer,\
                                     \ 'duration') %}\n  {% set duration_split = t_total_duration.split(':')\
                                     \ %}\n  {% set t_total_duration_sec  = (duration_split[0] | int\
-                                    \ * 3600) + (duration_split[1] | int * 60) + (duration_split[0]\
+                                    \ * 3600) + (duration_split[1] | int * 60) + (duration_split[2]\
                                     \ | int) %}\n  {% set t_elapsed_sec = (t_total_duration_sec -\
                                     \ t_remaining_sec) | int %}\n  {% set t_remaining = ((delayed_job_completion_duration)\
                                     \ | int) - t_elapsed_sec %}\n  \n  {{ 1 + t_remaining }}\n{% else\
@@ -775,18 +779,18 @@ action:
                 default:
                   - *calculate
                   - variables:
-                      json: '{{ states(appliance_metadata_job_cycle)|from_json }}'
-                      total_energy_int: '{{ states(appliance_energy_sensor) | float - json.initial_energy | float }}'
-                      time_start: '{{ json.time_start }}'
+                      json: '{{ states(appliance_metadata_job_cycle)|from_json if isset_metadata else dict(initial_energy=0, time_start=0, cost=0) }}'
+                      total_energy_int: '{{ states(appliance_energy_sensor) | float(0) - json.initial_energy | float(0) if isset_metadata else 0 }}'
+                      time_start: '{{ json.time_start | int(0) }}'
                       time_end: '{{ utcnow() | as_timestamp | int }}'
                       completion_delay: '{{ delayed_job_completion_duration | int(0) }}'
                       # variables for the action
-                      taxes: '{{ (states(energy_price_taxes) | float * total_energy_int) | round(4) }}'
-                      transfer: '{{ (states(energy_price_transfers) | float * total_energy_int) | round (4) }}'
-                      total_cost: '{{ json.cost | float | round(4)}}'
-                      total_cost_additional: '{{ (json.cost | float + transfer + taxes) | round(4) }}'
+                      taxes: '{{ ((states(energy_price_taxes) | float(0)) * total_energy_int) | round(4) if has_taxes else 0 }}'
+                      transfer: '{{ ((states(energy_price_transfers) | float(0)) * total_energy_int) | round(4) if has_transfers else 0 }}'
+                      total_cost: '{{ json.cost | float(0) | round(4) }}'
+                      total_cost_additional: '{{ (json.cost | float(0) + transfer + taxes) | round(4) }}'
                       total_energy: '{{ total_energy_int | round(4) }}'
-                      total_time: '{{ time_end - time_start - completion_delay }}'
+                      total_time: '{{ (time_end - time_start - completion_delay) if isset_metadata else 0 }}'
                   - alias: Run action when job cycle ends
                     choose: []
                     default: !input "actions_job_cycle_ends"
