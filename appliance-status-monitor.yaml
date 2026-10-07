@@ -94,6 +94,21 @@ blueprint:
             entity:
               domain: input_text
               multiple: false
+        appliance_window_log:
+          name: Appliance Energy window log
+          description: >-
+            (*OPTIONAL* | Helper | Name: <i><strong><your_appliance_name>_window_log</strong></i>)
+
+
+            An input_text helper that records the energy used and the cost of every cost window during a job.
+            **Set its maximum length to 255.** About 18 windows fit; if a job is longer, logging stops and
+            `windows_truncated` is true. Requires the metadata helper above. When the job ends, the actions get
+            a `windows` list (start, end, energy in kWh, cost, price per kWh).
+          default: []
+          selector:
+            entity:
+              domain: input_text
+              multiple: false
         energy_price:
           name: Energy Price
           description: '(*OPTIONAL* | Energy price.)'
@@ -417,6 +432,8 @@ variables:
   has_margin: '{{ energy_price_margin is string and energy_price_margin | length > 0 }}'
   has_transfers: '{{ energy_price_transfers is string and energy_price_transfers | length > 0 }}'
   has_taxes: '{{ energy_price_taxes is string and energy_price_taxes | length > 0 }}'
+  window_log: !input "appliance_window_log"
+  isset_window_log: '{{ isset_metadata and window_log is string and window_log | length > 0 }}'
 trigger:
   - platform: state
     entity_id: !input "appliance_power_sensor"
@@ -576,6 +593,34 @@ action:
               value: '{"initial_energy":{{initial_energy}},"energy_window":{{current_energy|round(3)}},"cost":{{cost_total|round(5)}},"transfer":{{transfer_total|round(5)}},"taxes":{{taxes_total|round(5)}},"time_start":{{time_start}}}'
             target:
               entity_id: !input "appliance_metadata_job_cycle"
+          # log this window: "<end as minutes since job start>:<Wh>:<cost x 10000>", entries separated by ";"
+          - if: '{{ isset_window_log and (trigger.id == "window_event" or energy_used > 0) }}'
+            then:
+              - variables:
+                  log: '{{ states(window_log) if states(window_log) not in ["unknown", "unavailable"] else "" }}'
+                  entry: '{{ [((((utcnow() | as_timestamp) + 1) // 60) | int) - (time_start // 60), (energy_used * 1000) | round(0) | int, ((price + margin + transfer_price + tax_price) * energy_used * 10000) | round(0) | int] | join(":") }}'
+                  new_log: '{{ log ~ (";" if log | length > 0 else "") ~ entry }}'
+                  max_len: '{{ state_attr(window_log, "max") | int(100) }}'
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: '{{ not log.endswith("!") and new_log | length + 1 <= max_len }}'
+                    sequence:
+                      - service: input_text.set_value
+                        data:
+                          value: '{{ new_log }}'
+                        target:
+                          entity_id: !input "appliance_window_log"
+                  - conditions:
+                      - condition: template
+                        value_template: '{{ not log.endswith("!") }}'
+                    sequence:
+                      # no room left: mark the log as truncated
+                      - service: input_text.set_value
+                        data:
+                          value: '{{ log ~ "!" }}'
+                        target:
+                          entity_id: !input "appliance_window_log"
   - choose:
       - conditions:
           - condition: template
@@ -731,6 +776,13 @@ action:
                         data: {}
                         target:
                           entity_id: !input "appliance_job_cycle"
+                      - if: '{{ isset_window_log }}'
+                        then:
+                          - service: input_text.set_value
+                            data:
+                              value: ""
+                            target:
+                              entity_id: !input "appliance_window_log"
                       - alias: reset energy helpers
                         if: '{{ isset_metadata }}'
                         then:
@@ -860,6 +912,19 @@ action:
                       total_cost_additional: '{{ (json.cost | float(0) + transfer + taxes) | round(4) }}'
                       total_energy: '{{ total_energy_int | round(4) }}'
                       total_time: '{{ (time_end - time_start - completion_delay) if isset_metadata else 0 }}'
+                      window_log_raw: '{{ states(window_log) if isset_window_log and states(window_log) not in ["unknown", "unavailable"] else "" }}'
+                      windows_truncated: '{{ window_log_raw.endswith("!") }}'
+                      windows: >-
+                        {%- set ns = namespace(start=time_start, out=[]) -%}
+                        {%- for e in window_log_raw.rstrip("!").split(";") if e -%}
+                          {%- set p = e.split(":") -%}
+                          {%- set end_ts = ((time_start // 60) + (p[0] | int(0))) * 60 -%}
+                          {%- set kwh = (p[1] | int(0)) / 1000 -%}
+                          {%- set cost = (p[2] | int(0)) / 10000 -%}
+                          {%- set ns.out = ns.out + [{"start": ns.start | timestamp_local, "end": end_ts | timestamp_local, "energy": kwh, "cost": cost, "price": ((cost / kwh) | round(4)) if kwh > 0 else 0}] -%}
+                          {%- set ns.start = end_ts -%}
+                        {%- endfor -%}
+                        {{- ns.out -}}
                   - alias: Run action when job cycle ends
                     choose: []
                     default: !input "actions_job_cycle_ends"
